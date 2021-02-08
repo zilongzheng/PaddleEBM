@@ -1,0 +1,66 @@
+epochs: 200
+output_dir: output_dir
+
+model:
+  name: CoopNets
+  generator:
+    name: MNISTGenerator
+    norm_type: batch
+    input_nz: 100
+    input_nc: 1
+    output_nc: 1
+    ngf: 64
+    init_gain: 0.002
+  ebm:
+    name: DCEBM
+    nef: 64
+    input_sz: 28
+    input_nc: 1
+    output_nc: 100
+    init_gain: 0.002
+  mcmc:
+    name: Langevin
+    num_steps: 15
+    step_size: 0.001
+    refsig: 0.016
+
+dataset:
+  train:
+    name: CommonVisionDataset
+    dataset_name: MNIST
+    dataroot: None
+    batch_size: 64
+    mode: train
+    transforms:
+      - name: Normalize
+        mean: [127.5]
+        std: [127.5]
+        keys: [image]
+  test:
+    name: CommonVisionDataset
+    dataset_name: MNIST
+    dataroot: None
+    batch_size: 64
+    mode: test
+    transforms:
+      - name: Normalize
+        mean: [127.5]
+        std: [127.5]
+        keys: [image]
+
+optimizer:
+  optimG:
+    name: Adam
+    beta1: 0.5
+    learning_rate: 0.0001
+  optimEBM:
+    name: Adam
+    beta1: 0.5
+    learning_rate: 0.007
+
+log_config:
+  interval: 100
+  visiual_interval: 500
+
+snapshot_config:
+  interval: 5

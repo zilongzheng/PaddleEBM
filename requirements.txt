@@ -1,0 +1,8 @@
+paddlepaddle-gpu==2.0.0
+pyyaml
+easydict
+numpy
+scipy
+pillow
+opencv-python
+tqdm
