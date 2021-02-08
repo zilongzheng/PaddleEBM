@@ -14,3 +14,4 @@
 
 from .base_model import BaseModel
 from .coopnets_model import CoopNets
+from .coop_vaebm_model import CoopVAEBM

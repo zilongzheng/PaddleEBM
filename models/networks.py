@@ -6,6 +6,7 @@ from paddle.nn import BatchNorm2D
 from .modules.norm import build_norm_layer
 from .modules.init import init_weights
 
+
 def define_generator(netG_cfg):
     _cfg = netG_cfg.copy()
     net_name = _cfg.pop('name')
@@ -15,10 +16,13 @@ def define_generator(netG_cfg):
     elif net_name == 'MNISTGenerator':
         netG = MNISTGenerator(**_cfg)
     else:
-        raise NotImplementedError('Generator model name [%s] is not recognized' % net_name)
-    init_cfgs = {k:v for k, v in _cfg.items() if k in ['init_type', 'init_gain', 'distribution']}
+        raise NotImplementedError(
+            'Generator model name [%s] is not recognized' % net_name)
+    init_cfgs = {k: v for k, v in _cfg.items() if k in [
+        'init_type', 'init_gain', 'distribution']}
     init_weights(netG, **init_cfgs)
     return netG
+
 
 def define_ebm(netEBM_cfg):
     _cfg = netEBM_cfg.copy()
@@ -28,21 +32,38 @@ def define_ebm(netEBM_cfg):
         netEBM = DCEBM(**_cfg)
     else:
         raise NotImplementedError('EBM name [%s] is not recognized' % net_name)
-    init_cfgs = {k:v for k, v in _cfg.items() if k in ['init_type', 'init_gain', 'distribution']}
+    init_cfgs = {k: v for k, v in _cfg.items() if k in [
+        'init_type', 'init_gain', 'distribution']}
     init_weights(netEBM, **init_cfgs)
     return netEBM
-    
+
+
+def define_encoder(encoder_cfg):
+    _cfg = encoder_cfg.copy()
+    net_name = _cfg.pop('name')
+    encoder = None
+    if net_name == 'DCEncoder':
+        encoder = DCEncoder(**_cfg)
+    else:
+        raise NotImplementedError(
+            'Encoder model name [%s] is not recognized' % net_name)
+    init_cfgs = {k: v for k, v in _cfg.items() if k in [
+        'init_type', 'init_gain', 'distribution']}
+    init_weights(encoder, **init_cfgs)
+    return encoder
+
 
 class DCEBM(nn.Layer):
     """ Vanilla Deep Convolutional EBM
     """
+
     def __init__(self,
                  input_sz,
                  input_nc,
                  output_nc,
                  nef=64,
                  **kwargs):
-        """Construct a DCGenerator generator
+        """Construct a DCEBM
         Args:
             input_nz (int)      -- the number of dimension in input noise
             input_nc (int)      -- the number of channels in input images
@@ -73,12 +94,60 @@ class DCEBM(nn.Layer):
     def forward(self, x):
         """Standard forward"""
         out = self.conv(x)
-        return self.fc(out).sum()
+        return self.fc(out)
+
+
+class DCEncoder(nn.Layer):
+    """ Vanilla Deep Convolutional Encoder
+    """
+
+    def __init__(self,
+                 input_sz,
+                 input_nc,
+                 output_nc,
+                 nef=64,
+                 norm_type='batch',
+                 **kwargs):
+        """Construct a DCEncoder
+        Args:
+            input_nz (int)      -- the number of dimension in input noise
+            input_nc (int)      -- the number of channels in input images
+            output_nc (int)     -- the number of channels in output images
+            ngf (int)           -- the number of filters in the last conv layer
+            norm_layer          -- normalization layer
+        """
+        super(DCEncoder, self).__init__()
+
+        model = [
+            nn.Conv2D(input_nc, nef, 4, 2, 1),
+            nn.LeakyReLU(),
+
+            nn.Conv2D(nef, nef, 4, 2, 1),
+            nn.LeakyReLU(),
+
+            nn.Conv2D(nef, nef, 4, 2, 1),
+            nn.LeakyReLU()
+        ]
+
+        self.conv = nn.Sequential(*model)
+        out_sz = input_sz // 8
+        self.fc = nn.Linear(out_sz * out_sz * nef, output_nc)
+        self.fcVar = nn.Linear(out_sz * out_sz * nef, output_nc)
+
+    def forward(self, x):
+        """Standard forward"""
+        out = self.conv(x)
+        out_flat = paddle.flatten(out, start_axis=1)
+        fc = self.fc(out_flat)
+        fcVar = self.fcVar(out_flat)
+
+        return fc, fcVar
 
 
 class MNISTGenerator(nn.Layer):
     """ Deep Convolutional Generator for MNIST
     """
+
     def __init__(self,
                  input_nz,
                  input_nc,
@@ -125,9 +194,11 @@ class MNISTGenerator(nn.Layer):
         """Standard forward"""
         return self.model(x)
 
+
 class DCGenerator(nn.Layer):
     """ Deep Convolutional Generator
     """
+
     def __init__(self,
                  input_nz,
                  input_nc,
@@ -157,62 +228,62 @@ class DCGenerator(nn.Layer):
         if norm_type == 'batch':
             model = [
                 nn.Conv2DTranspose(input_nz,
-                                    ngf * mult,
-                                    kernel_size=4,
-                                    stride=1,
-                                    padding=0,
-                                    bias_attr=use_bias),
+                                   ngf * mult,
+                                   kernel_size=4,
+                                   stride=1,
+                                   padding=0,
+                                   bias_attr=use_bias),
                 BatchNorm2D(ngf * mult),
                 nn.ReLU()
             ]
         else:
             model = [
                 nn.Conv2DTranspose(input_nz,
-                                    ngf * mult,
-                                    kernel_size=4,
-                                    stride=1,
-                                    padding=0,
-                                    bias_attr=use_bias),
+                                   ngf * mult,
+                                   kernel_size=4,
+                                   stride=1,
+                                   padding=0,
+                                   bias_attr=use_bias),
                 norm_layer(ngf * mult),
                 nn.ReLU()
             ]
 
-        for i in range(1,n_downsampling):  # add upsampling layers
+        for i in range(1, n_downsampling):  # add upsampling layers
             mult = 2**(n_downsampling - i)
             output_size = 2**(i+2)
             if norm_type == 'batch':
                 model += [
-                nn.Conv2DTranspose(ngf * mult,
-                                    ngf * mult//2,
-                                    kernel_size=4,
-                                    stride=2,
-                                    padding=1,
-                                    bias_attr=use_bias),
-                BatchNorm2D(ngf * mult//2),
-                nn.ReLU()
-            ]
+                    nn.Conv2DTranspose(ngf * mult,
+                                       ngf * mult//2,
+                                       kernel_size=4,
+                                       stride=2,
+                                       padding=1,
+                                       bias_attr=use_bias),
+                    BatchNorm2D(ngf * mult//2),
+                    nn.ReLU()
+                ]
             else:
                 model += [
                     nn.Conv2DTranspose(ngf * mult,
-                                    int(ngf * mult//2),
-                                    kernel_size=4,
-                                    stride=2,
-                                    padding=1,
-                                    bias_attr=use_bias),
+                                       int(ngf * mult//2),
+                                       kernel_size=4,
+                                       stride=2,
+                                       padding=1,
+                                       bias_attr=use_bias),
                     norm_layer(int(ngf * mult // 2)),
                     nn.ReLU()
                 ]
 
         output_size = 2**(6)
         model += [
-                nn.Conv2DTranspose(ngf ,
-                                output_nc,
-                                kernel_size=4,
-                                stride=2,
-                                padding=1,
-                                bias_attr=use_bias),
-                nn.Tanh()
-                ]
+            nn.Conv2DTranspose(ngf,
+                               output_nc,
+                               kernel_size=4,
+                               stride=2,
+                               padding=1,
+                               bias_attr=use_bias),
+            nn.Tanh()
+        ]
 
         self.model = nn.Sequential(*model)
 
