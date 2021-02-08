@@ -22,14 +22,14 @@ model:
     name: Langevin
     num_steps: 15
     step_size: 0.001
-    refsig: 0.016
+    refsig: 0.016    
 
 dataset:
   train:
     name: CommonVisionDataset
     dataset_name: MNIST
     dataroot: None
-    batch_size: 64
+    batch_size: 200
     mode: train
     transforms:
       - name: Normalize
@@ -40,7 +40,7 @@ dataset:
     name: CommonVisionDataset
     dataset_name: MNIST
     dataroot: None
-    batch_size: 64
+    batch_size: 200
     mode: test
     transforms:
       - name: Normalize
@@ -61,6 +61,7 @@ optimizer:
 log_config:
   interval: 100
   visiual_interval: 500
+  samples_every_row: 10
 
 snapshot_config:
   interval: 5

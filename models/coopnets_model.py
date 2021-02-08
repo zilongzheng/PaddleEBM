@@ -12,14 +12,6 @@ from utils.visual import make_grid
 from .networks import define_generator, define_ebm
 
 
-def gradient(tensor):
-    if tensor._grad_ivar() is None:
-        return None
-
-    new_ivar = tensor._grad_ivar()
-    return new_ivar.value().get_tensor()
-
-
 @MODELS.register()
 class CoopNets(BaseModel):
     """ This class implements the vanilla CoopNets model.
@@ -31,7 +23,6 @@ class CoopNets(BaseModel):
         super(CoopNets, self).__init__(params=params)
         self.mcmc_cfg = mcmc
 
-        self.iter = 0
         self.lr_scheduler = OrderedDict()
 
         self.input_nz = generator['input_nz']
@@ -81,7 +72,7 @@ class CoopNets(BaseModel):
         """Run forward pass; called by both functions <train_iter> and <test_iter>."""
 
         batch_size = self.inputs['obs'].shape[0]
-        self.z = paddle.rand(shape=(batch_size, self.input_nz, 1, 1))
+        self.z = paddle.randn(shape=(batch_size, self.input_nz, 1, 1))
         self.fake_gen = self.nets['netG'](self.z)
         self.fake_syn = self.mcmc_sample(self.fake_gen)
 
@@ -93,7 +84,8 @@ class CoopNets(BaseModel):
         self.real_neg_energy = self.nets['netEBM'](self.inputs['obs'])
         self.fake_neg_energy = self.nets['netEBM'](self.fake_syn)
 
-        self.loss_EBM = paddle.sum(self.fake_neg_energy.mean(0) - self.real_neg_energy.mean(0))
+        self.loss_EBM = paddle.sum(self.fake_neg_energy.mean(
+            0) - self.real_neg_energy.mean(0))
         self.loss_EBM.backward()
         self.losses['loss_EBM'] = self.loss_EBM
 

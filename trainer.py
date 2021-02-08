@@ -28,6 +28,7 @@ from utils.visual import tensor2img, save_image
 from utils.filesystem import makedirs, save, load
 from utils.timer import TimeAverager
 from utils.logger import get_logger
+from utils.visual import make_grid
 
 
 class IterLoader:
@@ -324,6 +325,7 @@ class Trainer:
         if (image_num is None) or (not self.enable_visualdl):
             image_num = 1
         for label, image in visual_results.items():
+            image = make_grid(image, self.cfg.log_config.get('samples_every_row', 8)).detach()
             image_numpy = tensor2img(image, min_max, image_num)
             if (not is_save_image) and self.enable_visualdl:
                 self.vdl_logger.add_image(
