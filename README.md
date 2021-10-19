@@ -25,6 +25,7 @@ python train.py --config-file configs/coopnets_mnist.yaml
 ```
 
 ## Publication
+- Patchwise Generative ConvNet: Training Energy-Based Models from a Single Natural Image for Internal Learning. CVPR 2021 [[Pdf](https://openaccess.thecvf.com/content/CVPR2021/papers/Zheng_Patchwise_Generative_ConvNet_Training_Energy-Based_Models_From_a_Single_Natural_CVPR_2021_paper.pdf)][[Model](./models/patchgencn_model.py)][[Config](./configs/patchgencn_single.yaml)]
 - Learning Energy-Based Model with Variational Auto-Encoder as Amortized Sampler. AAAI 2021 [[Pdf](https://arxiv.org/pdf/2012.14936.pdf)]
 - Learning Cycle-Consistent Cooperative Networks via Alternating MCMC Teaching for Unsupervised Cross-Domain Translation. AAAI 2021
 - Generative VoxelNet: Learning Energy-Based Models for 3D Shape Synthesis and Analysis. TPAMI 2020 [[Pdf](https://arxiv.org/pdf/2012.13522.pdf)]
