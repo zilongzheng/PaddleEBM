@@ -72,7 +72,7 @@ class Trainer:
     #                     |                                    ||
     #         print log (model.get_current_losses)             ||
     #                     |                                    ||
-    #         save checkpoint (model.nets)                     \/
+    #         save checkpoint (model.nets)                    \\//
     """
 
     def __init__(self, cfg):

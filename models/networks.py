@@ -85,10 +85,9 @@ class PatchEBM(nn.Layer):
     def __init__(self,
                  input_nc,
                  output_nc,
-                 nefs=[64, 64, 64],
+                 nefs=[64, 64, 64, 64],
                  sn=True,
-                 init_gain=0.002,
-                 **kwargs):
+                 init_gain=0.002):
         """Construct a DCGenerator generator
         Args:
             input_sz (int)      -- the number of dimension in input images
@@ -105,25 +104,21 @@ class PatchEBM(nn.Layer):
 
         i_c = input_nc
         for l_i, nef in enumerate(nefs):
-            o_c = output_nc if l_i == len(nefs)-1 else nef
-            layer = nn.Conv2D(i_c, o_c, 3, 1, weight_attr=weight_attr)
-            i_c = o_c
+            layer = nn.Conv2D(i_c, nef, 3, 1, weight_attr=weight_attr)
             if sn:
                 layer = Spectralnorm(layer)
             model.append(layer)
             model.append(nn.ELU())
+            i_c = nef
+
+        model.append(
+            nn.Conv2D(i_c, output_nc, 3, 1, weight_attr=weight_attr)
+        )
 
         self.conv = nn.Sequential(*model)
         self.fc = nn.Sequential(
             nn.Flatten(),
         )
-
-        # self.init()
-
-    def init(self):
-        for m in self.modules():
-            if isinstance(m, nn.Conv2D):
-                m.weight.data.normal_(0, 0.005)
 
     def forward(self, x):
         """Standard forward"""

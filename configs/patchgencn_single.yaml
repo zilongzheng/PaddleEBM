@@ -22,8 +22,9 @@ model:
   name: PatchGenCN
   nets:
   - name: PatchEBM
-    nef:
+    nefs:
       - 64
+      - 32
       - 32
       - 32
     input_nc: 3
@@ -36,8 +37,9 @@ model:
       noise_init: 0.1
       num_steps_rec: 30
   - name: PatchEBM
-    nef:
+    nefs:
       - 64
+      - 32
       - 32
       - 32
     input_nc: 3
@@ -49,8 +51,9 @@ model:
       step_size: 0.01
       noise_init: 0.1
   - name: PatchEBM
-    nef:
+    nefs:
       - 128
+      - 64
       - 64
       - 64
     input_nc: 3

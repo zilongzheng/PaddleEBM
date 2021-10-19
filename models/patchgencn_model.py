@@ -119,15 +119,23 @@ class PatchGenCN(BaseModel):
         us_init = imresize_T(ls_init, new_shape=shape, resample="bicubic")
         return us_init
 
+    def get_weight_gradients(self, net):
+        grads = []
+        for name, param in net.named_parameters():
+            if 'weight' in name:
+                grad = param.grad
+                if grad is not None:
+                    grads.append(np.abs(grad.numpy().mean()))
+        return np.mean(grads)
 
     def forward(self):
         """Run forward pass; called by both functions <train_iter> and <test_iter>."""
         if self.current_scale == 1:
             self.init_syn = self.generate_noise(list(self.scales[0]))
-            if self.current_iter == 1:
+            if self.current_iter == 1 and self.lambda_rec > 0:
                 self.init_fix = self.get_init_fix(list(self.scales[0]))
         else:
-            if self.current_iter == 1:
+            if self.current_iter == 1 and self.lambda_rec > 0:
                 self.init_fix = self.multi_scale_sequential_sample(self.current_scale, mode="fix")
             self.init_syn = self.multi_scale_sequential_sample(self.current_scale, mode="rand")
 
@@ -138,30 +146,38 @@ class PatchGenCN(BaseModel):
         mcmc_cfg = self.mcmc_cfgs['mcmc%d'%self.current_scale]
         noise_scale = self.get_noise_scale(mcmc_cfg)
         self.fake_syn = self.mcmc_sample(self.nets['netEBM%d'%self.current_scale], init_syn_pad, noise_scale, mcmc_cfg)
-        self.fake_rec = self.mcmc_sample(self.nets['netEBM%d'%self.current_scale], init_fix_pad, mcmc_cfg['noise_min'], mcmc_cfg, mode="rec")
+        if self.lambda_rec > 0:
+            self.fake_rec = self.mcmc_sample(self.nets['netEBM%d'%self.current_scale], init_fix_pad, mcmc_cfg['noise_min'], mcmc_cfg, mode="rec")
 
         if self.current_iter == 1:
             self.visual_items['real'] = self.inputs['obs%d'%self.current_scale]
-            self.visual_items['init_fix'] = self.init_fix
             self.visual_items['init_rand'] = self.init_syn
+            if self.lambda_rec > 0:
+                self.visual_items['init_fix'] = self.init_fix
         self.visual_items['fake'] = self.unpad_func(self.fake_syn)
-        self.visual_items['rec'] = self.unpad_func(self.fake_rec)
+        if self.lambda_rec > 0:
+            self.visual_items['rec'] = self.unpad_func(self.fake_rec)
         self.losses['noise_scale'] = noise_scale
 
     def backward_EBM(self):
         self.real_neg_energy = self.nets['netEBM%d'%self.current_scale](self.pad_func(self.inputs['obs%d'%self.current_scale]))
         self.fake_neg_energy = self.nets['netEBM%d'%self.current_scale](self.fake_syn)
-        self.reco_neg_energy = self.nets['netEBM%d'%self.current_scale](self.fake_rec)
 
-        self.loss_EBM_syn = paddle.sum(self.fake_neg_energy.mean(
-            0) - self.real_neg_energy.mean(0))
-        self.loss_EBM_rec = paddle.sum(self.reco_neg_energy.mean(
+        self.loss_EBM_syn = paddle.mean(self.fake_neg_energy.mean(
             0) - self.real_neg_energy.mean(0))
 
-        self.loss_EBM = self.loss_EBM_syn + self.lambda_rec * self.loss_EBM_rec
+        self.loss_EBM = self.loss_EBM_syn
+
+        if self.lambda_rec > 0:
+            self.reco_neg_energy = self.nets['netEBM%d'%self.current_scale](self.fake_rec)
+            self.loss_EBM_rec = paddle.mean(self.reco_neg_energy.mean(
+                0) - self.real_neg_energy.mean(0))
+
+            self.loss_EBM += self.lambda_rec * self.loss_EBM_rec
 
         self.loss_EBM.backward()
         self.losses['loss_EBM'] = self.loss_EBM
+        self.losses['gradients'] = self.get_weight_gradients(self.nets['netEBM%d'%self.current_scale])
 
     def train_iter(self, optims=None):
         self.forward()
