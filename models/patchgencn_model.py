@@ -122,11 +122,9 @@ class PatchGenCN(BaseModel):
     def get_weight_gradients(self, net):
         grads = []
         for name, param in net.named_parameters():
-            if 'weight' in name:
-                grad = param.grad
-                if grad is not None:
-                    grads.append(np.abs(grad.numpy().mean()))
-        return np.mean(grads)
+            if name.endswith('weight') or name.endswith('weight_orig'):
+                grads.append(param.grad.mean().abs())
+        return paddle.stack(grads).mean()
 
     def forward(self):
         """Run forward pass; called by both functions <train_iter> and <test_iter>."""
