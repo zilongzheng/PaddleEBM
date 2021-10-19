@@ -99,6 +99,11 @@ def make_grid(tensor, nrow=8, normalize=False, range=None, scale_each=False):
     return canvas
 
 
+def img2tensor(input_image):
+    img = np.array(input_image, dtype=np.float32)
+    img = (img - 127.5) / 127.5
+    return paddle.to_tensor(img.transpose(2, 0, 1))    
+
 def tensor2img(input_image, min_max=(-1., 1.), image_num=1, imtype=np.uint8):
     """"Converts a Tensor array into a numpy image array.
 
@@ -148,6 +153,23 @@ def tensor2img(input_image, min_max=(-1., 1.), image_num=1, imtype=np.uint8):
         image_numpy = input_image
     image_numpy = image_numpy.round()
     return image_numpy.astype(imtype)
+
+def imresize_T(image_T, new_shape, resample="bilinear"):
+    str2mode = {
+        "bilinear": Image.BILINEAR, "bicubic": Image.BICUBIC, "nearest": Image.NEAREST, "lanczos": Image.LANCZOS
+    }
+    image_num = image_T.shape[0]
+    image = tensor2img(image_T, image_num=image_num)
+    def resize_(img):
+        im = Image.fromarray(img)
+        new_im = im.resize((new_shape[1], new_shape[0]), resample=str2mode[resample])
+        return img2tensor(new_im)
+
+    if image_num == 1:
+        return resize_(image).unsqueeze(0)
+    else:
+        return paddle.stack([resize_(img) for img in image], axis=0)
+
 
 
 def save_image(image_numpy, image_path, aspect_ratio=1.0):

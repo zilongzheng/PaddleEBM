@@ -13,12 +13,14 @@
 # limitations under the License.
 
 import sys
+import os
 import cv2
 import glob
 import random
 import numbers
 import collections
 import numpy as np
+import math
 
 from PIL import Image
 
@@ -98,6 +100,53 @@ class SplitPairedImage:
 
         return datas
 
+
+@PREPROCESS.register()
+class ScaledResize:
+
+    str2mode = {
+        "bilinear": Image.BILINEAR, "bicubic": Image.BICUBIC, "nearest": Image.NEAREST, "lanczos": Image.LANCZOS
+    }
+
+    def __init__(self, num_scales, min_size, max_size, mode='lanczos'):
+        self.mode = self.str2mode[mode]
+        self.num_scales = num_scales
+        self.min_size = min_size
+        self.max_size = max_size
+
+    def __call__(self, dataroot):
+        basename = dataroot.split('.')[0]
+        image = Image.open(dataroot).convert('RGB')
+        w, h = image.size
+        if w < h:
+            h_resize = min(self.max_size, h)
+            w_resize = round(w * h_resize / h)
+            w_min = self.min_size
+            h_min = round(h * self.min_size / h)
+        else:
+            w_resize = min(self.max_size, w)
+            h_resize = round(h * w_resize / w)
+            w_min = round(w * self.min_size / h)
+            h_min = self.min_size
+        
+        # os.makedirs(basename, exist_ok=True)
+        hd_image = image.resize([w_resize, h_resize], resample=self.mode)
+        self.scale_factor = math.pow(
+            max(w_min, h_min) / max(w_resize, h_resize), 1.0 / (self.num_scales-1)
+        )
+        out_images = []
+        for i in range(1, self.num_scales+1):
+            scale = math.pow(self.scale_factor, self.num_scales-i)
+            new_shape = [round(d * scale) for d in hd_image.size]
+            resized_image = hd_image.resize(new_shape, resample=self.mode)
+            save_path = os.path.join(basename, 'scale_%d.jpg' % i)
+            # resized_image.save(save_path)
+            out_images.append({
+                'image': resized_image,
+                'size': resized_image.size
+            })
+
+        return self.scale_factor, self.num_scales, out_images
 
 @TRANSFORMS.register()
 class PairedRandomCrop(T.RandomCrop):

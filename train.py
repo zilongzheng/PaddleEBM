@@ -6,8 +6,7 @@ from utils.config import get_config
 from utils.setup import setup
 from utils.logger import get_logger
 
-from trainer import Trainer
-
+from trainers.builder import build_trainer
 
 
 def parse_args():
@@ -66,7 +65,7 @@ def main(args, cfg):
     logger.info(cfg)
     
     # build trainer
-    trainer = Trainer(cfg)
+    trainer = build_trainer(cfg)
 
     # continue train or evaluate, checkpoint need contain epoch and optimizer info
     if args.resume:
@@ -82,7 +81,8 @@ def main(args, cfg):
     try:
         trainer.train()
     except KeyboardInterrupt as e:
-        trainer.save(trainer.current_epoch)
+        if trainer.by_epoch:
+            trainer.save(trainer.current_epoch)
     trainer.close()
 
 

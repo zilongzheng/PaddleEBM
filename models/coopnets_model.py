@@ -8,6 +8,7 @@ from .builder import MODELS
 from .criterions.builder import build_criterion
 
 from solver.builder import build_optimizer, build_lr_scheduler
+from utils.visual import make_grid
 from .networks import define_generator, define_ebm
 
 
@@ -60,7 +61,7 @@ class CoopNets(BaseModel):
             cur_state.stop_gradient = False
             neg_energy = self.nets['netEBM'](cur_state)
             grad = paddle.grad([neg_energy], [cur_state], retain_graph=True)[0]
-            noise = paddle.rand(shape=self.inputs['obs'].shape)
+            noise = paddle.randn(shape=self.inputs['obs'].shape)
             new_state = cur_state - self.mcmc_cfg.step_size * self.mcmc_cfg.step_size * \
                 (cur_state / self.mcmc_cfg.refsig / self.mcmc_cfg.refsig -
                  grad) + self.mcmc_cfg.step_size * noise

@@ -1,5 +1,6 @@
 epochs: 200
 output_dir: output_dir
+trainer: Trainer
 
 model:
   name: CoopNets

@@ -24,14 +24,15 @@ LRSCHEDULERS.register(MultiStepDecay)
 @LRSCHEDULERS.register()
 class LinearDecay(LambdaDecay):
     def __init__(self, learning_rate, start_epoch, decay_epochs,
-                 iters_per_epoch):
+                 iters_per_epoch, lr_min=0.0):
         """
         lr = learnin_rate * (1 - max(0, epoch + 1 - start_epoch) / float(decay_epochs + 1))
         """
         def lambda_rule(epoch):
             epoch = epoch // iters_per_epoch
-            lr_l = 1.0 - max(0,
-                             epoch + 1 - start_epoch) / float(decay_epochs + 1)
+            min_scale = lr_min / learning_rate
+            lr_l = 1.0 - min(1.0, max(0,
+                             epoch + 1 - start_epoch) / float(decay_epochs + 1)) * (1.0 - min_scale)
             return lr_l
 
         super().__init__(learning_rate, lambda_rule)

@@ -1,0 +1,85 @@
+total_iters: 4000
+output_dir: output_dir
+trainer: SingleImageTrainer
+
+dataset:
+  train:
+    name: SingleImageDataset
+    dataroot: data/mountains.jpg
+    preprocess:
+      - name: ScaledResize
+        mode: lanczos
+        num_scales: 8
+        min_size: 25
+        max_size: 250
+    transforms:
+      - name: Normalize
+        mean: [127.5]
+        std: [127.5]
+        keys: [image]
+
+model:
+  name: PatchGenCN
+  nets:
+  - name: PatchEBM
+    nef:
+      - 64
+      - 32
+      - 32
+    input_nc: 3
+    output_nc: 1
+    init_gain: 0.005
+    mcmc:
+      name: Langevin
+      num_steps: 60
+      step_size: 0.01
+      noise_init: 0.1
+      num_steps_rec: 30
+  - name: PatchEBM
+    nef:
+      - 64
+      - 32
+      - 32
+    input_nc: 3
+    output_nc: 1
+    init_gain: 0.005
+    mcmc:
+      name: Langevin
+      num_steps: 30
+      step_size: 0.01
+      noise_init: 0.1
+  - name: PatchEBM
+    nef:
+      - 128
+      - 64
+      - 64
+    input_nc: 3
+    output_nc: 1
+    init_gain: 0.005
+    mcmc:
+      name: Langevin
+      num_steps: 30
+      step_size: 0.01
+      noise_init: 0.1
+  params:
+    lambda_rec: 0.1
+
+
+optimizer:
+  optimEBM:
+    name: Adam
+    beta1: 0.5
+    learning_rate: 0.0004
+    lr_scheduler:
+      name: LinearDecay
+      start_epoch: 1
+      decay_epochs: 3200
+      lr_min: 0.00005
+
+log_config:
+  interval: 100
+  visiual_interval: 500
+  samples_every_row: 10
+
+snapshot_config:
+  interval: 5

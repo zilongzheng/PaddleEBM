@@ -1,4 +1,4 @@
-paddlepaddle-gpu==2.0.0
+paddlepaddle-gpu
 pyyaml
 easydict
 numpy
@@ -6,3 +6,4 @@ scipy
 pillow
 opencv-python
 tqdm
+scipy

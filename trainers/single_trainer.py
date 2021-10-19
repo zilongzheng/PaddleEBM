@@ -15,64 +15,29 @@
 import os
 import time
 import copy
+from typing import OrderedDict
+import numpy as np
 
 import logging
 import datetime
 
 import paddle
 from paddle.distributed import ParallelEnv
+from paddle.fluid.data import data
 
-from datasets.builder import build_dataloader
+from datasets.single_image_dataset import SingleImageDataset
 from models.builder import build_model
 from utils.visual import tensor2img, save_image
 from utils.filesystem import makedirs, save, load
 from utils.timer import TimeAverager
 from utils.logger import get_logger
 from utils.visual import make_grid
+from .builder import TRAINER
+from .trainer import IterLoader
 
 
-class IterLoader:
-    def __init__(self, dataloader):
-        self._dataloader = dataloader
-        self.iter_loader = iter(self._dataloader)
-        self._epoch = 1
-
-    @property
-    def epoch(self):
-        return self._epoch
-
-    def __next__(self):
-        try:
-            data = next(self.iter_loader)
-        except StopIteration:
-            self._epoch += 1
-            self.iter_loader = iter(self._dataloader)
-            data = next(self.iter_loader)
-
-        return data
-
-    def __len__(self):
-        return len(self._dataloader)
-
-
-class Trainer:
-    """
-    # trainer calling logic:
-    #
-    #                build_model                               ||    model(BaseModel)
-    #                     |                                    ||
-    #               build_dataloader                           ||    dataloader
-    #                     |                                    ||
-    #               model.setup_lr_schedulers                  ||    lr_scheduler
-    #                     |                                    ||
-    #               model.setup_optimizers                     ||    optimizers
-    #                     |                                    ||
-    #     train loop (model.setup_input + model.train_iter)    ||    train loop
-    #                     |                                    ||
-    #         print log (model.get_current_losses)             ||
-    #                     |                                    ||
-    #         save checkpoint (model.nets)                     \/
-    """
+@TRAINER.register()
+class SingleImageTrainer:
 
     def __init__(self, cfg):
         # base config
@@ -86,19 +51,12 @@ class Trainer:
         self.visual_interval = cfg.log_config.visiual_interval
         self.weight_interval = cfg.snapshot_config.interval
 
-        self.start_epoch = 1
-        self.current_epoch = 1
-        self.current_iter = 1
-        self.inner_iter = 1
-        self.batch_id = 0
+        self.current_scale = 1
+        self.start_scale = 1
         self.global_steps = 0
         self.logger = get_logger()
+        self.total_iters = cfg.total_iters
 
-        # build model
-        self.model = build_model(cfg.model)
-        # multiple gpus prepare
-        if ParallelEnv().nranks > 1:
-            self.distributed_data_parallel()
 
         # build metrics
         self.metrics = None
@@ -116,27 +74,33 @@ class Trainer:
             return
 
         # build train dataloader
-        self.train_dataloader = build_dataloader(cfg.dataset.train)
-        self.iters_per_epoch = len(self.train_dataloader)
-        self.logger.info('Done Loading dataset [{}], num batchs: {}'.format(
-            cfg.dataset.train.dataset_name, self.iters_per_epoch))
+        data_cfg = cfg.dataset.train
+        self.train_dataset = SingleImageDataset(**data_cfg)
+        self.logger.info('Done Loading data [{}]'.format(cfg.dataset.train.dataroot))
+        self.num_scales = self.train_dataset.num_scales
+        self.by_epoch = False
+
+        # build model
+        # self.model = build_model(cfg.model)
+        if 'params' in cfg.model:
+            params = cfg.model.pop('params')
+        else:
+            params = OrderedDict()
+        params.update({
+            'max_image_size': self.train_dataset.max_image_size,
+            'min_image_size': self.train_dataset.min_image_size,
+            'num_scales': self.train_dataset.num_scales,
+            'scale_factor': self.train_dataset.scale_factor,
+            'scales': self.train_dataset.scales
+        })
+        cfg.model.params = params
+        self.model = build_model(cfg.model)
 
         # build lr scheduler
-        cfg.optimizer.iters_per_epoch = self.iters_per_epoch
+        self.optim_cfg = cfg.optimizer
 
         # build optimizers
-        self.optimizers = self.model.setup_optimizers(cfg.optimizer)
-
-        self.epochs = cfg.get('epochs', None)
-        if self.epochs:
-            self.total_iters = self.epochs * self.iters_per_epoch
-            self.by_epoch = True
-        else:
-            self.by_epoch = False
-            self.total_iters = cfg.total_iters
-
-        if self.by_epoch:
-            self.weight_interval *= self.iters_per_epoch
+        # self.optimizers = self.model.setup_optimizers(cfg.optimizer)
 
         self.validate_interval = -1
         if cfg.get('validate', None) is not None:
@@ -161,51 +125,51 @@ class Trainer:
                 self.model.lr_scheduler.step()
 
     def train(self):
-        reader_cost_averager = TimeAverager()
         batch_cost_averager = TimeAverager()
+        self.current_scale = self.start_scale
 
-        iter_loader = IterLoader(self.train_dataloader)
+        while self.current_scale < (self.num_scales + 1):
 
-        while self.current_iter < (self.total_iters + 1):
-            self.current_epoch = iter_loader.epoch
-            self.inner_iter = self.current_iter % self.iters_per_epoch
-
+            # train single scale
             start_time = step_start_time = time.time()
-            data = next(iter_loader)
-            reader_cost_averager.record(time.time() - step_start_time)
-            # unpack data from dataset and apply preprocessing
-            # data input should be dict
-            self.model.setup_input(data)
-            self.model.train_iter(self.optimizers)
+            real_img = self.train_dataset[self.current_scale-1]
 
-            batch_cost_averager.record(time.time() - step_start_time,
-                                       num_samples=self.cfg.get(
-                                           'batch_size', 1))
+            self.logger.info('Working on scale {}: {}'.format(self.current_scale, real_img['img'].shape[1:]))
 
-            step_start_time = time.time()
+            self.model.setup_scale(self.current_scale)
+            self.model.setup_input(real_img)
+            optims = self.model.setup_optimizers(self.current_scale, self.optim_cfg)
 
-            if self.current_iter % self.log_interval == 0:
-                self.data_time = reader_cost_averager.get_average()
-                self.step_time = batch_cost_averager.get_average()
-                self.ips = batch_cost_averager.get_ips_average()
-                self.print_log()
+            self.model.current_iter = self.current_iter = 1
 
-                reader_cost_averager.reset()
-                batch_cost_averager.reset()
+            while self.current_iter < self.total_iters + 1:
+    
+                start_time = step_start_time = time.time()
+                self.model.train_iter(optims)
+                batch_cost_averager.record(time.time() - step_start_time,
+                                        num_samples=self.cfg.get(
+                                            'batch_size', 1))
 
-            if self.current_iter % self.visual_interval == 0:
-                self.visual('visual_train')
+                step_start_time = time.time()
 
-            self.learning_rate_scheduler_step()
+                if self.current_iter % self.log_interval == 0:
+                    self.step_time = batch_cost_averager.get_average()
+                    self.ips = batch_cost_averager.get_ips_average()
+                    self.print_log()
 
-            if self.validate_interval > -1 and self.current_iter % self.validate_interval == 0:
-                self.test()
+                    batch_cost_averager.reset()
 
-            if self.current_iter % self.weight_interval == 0:
-                self.save(self.current_iter, 'weight', keep=-1)
-                self.save(self.current_iter)
 
-            self.current_iter += 1
+                if self.current_iter == 1 or self.current_iter % self.visual_interval == 0:
+                    self.visual('scale_%d'%self.current_scale)
+
+                self.learning_rate_scheduler_step()
+
+                self.current_iter += 1
+            
+            self.save(self.current_scale, 'netEBM%d'%self.current_scale, name='weight')
+
+            self.current_scale += 1
 
     def test(self):
         if not hasattr(self, 'test_dataloader'):
@@ -324,8 +288,9 @@ class Trainer:
         image_num = self.cfg.get('image_num', None)
         if (image_num is None) or (not self.enable_visualdl):
             image_num = 1
-        for label, image in visual_results.items():
-            image = make_grid(image, self.cfg.log_config.get('samples_every_row', 8)).detach()
+        for label in list(visual_results.keys()):
+            # image = make_grid(image, self.cfg.log_config.get('samples_every_row', 1)).detach()
+            image = visual_results.pop(label)
             image_numpy = tensor2img(image, min_max, image_num)
             if (not is_save_image) and self.enable_visualdl:
                 self.vdl_logger.add_image(
@@ -335,7 +300,10 @@ class Trainer:
                     dataformats="HWC" if image_num == 1 else "NCHW")
             else:
                 if self.cfg.is_train:
-                    msg = 'epoch%.3d_' % self.current_epoch
+                    if self.by_epoch:
+                        msg = 'epoch%.3d_' % self.current_epoch
+                    else:
+                        msg = 'iter%.3d_' % self.current_iter
                 else:
                     msg = ''
                 makedirs(os.path.join(self.output_dir, results_dir))
@@ -343,66 +311,54 @@ class Trainer:
                                         msg + '%s.png' % (label))
                 save_image(image_numpy, img_path)
 
-    def save(self, epoch, name='checkpoint', keep=1):
+    def save(self, scale, net_name, opt_name=None, name='checkpoint'):
+        save_dir = os.path.join(self.output_dir, 'models')
         if self.local_rank != 0:
             return
 
         assert name in ['checkpoint', 'weight']
 
         state_dicts = {}
-        if self.by_epoch:
-            save_filename = 'epoch_%s_%s.pdparams' % (
-                epoch // self.iters_per_epoch, name)
-        else:
-            save_filename = 'iter_%s_%s.pdparams' % (epoch, name)
+        save_filename = 'scale_%s_%s.pdparams' % (scale, name)
 
-        os.makedirs(self.output_dir, exist_ok=True)
-        save_path = os.path.join(self.output_dir, save_filename)
-        for net_name, net in self.model.nets.items():
-            state_dicts[net_name] = net.state_dict()
+        os.makedirs(save_dir, exist_ok=True)
+        save_path = os.path.join(save_dir, save_filename)
+        # for net_name, net in self.model.nets.items():
+        state_dicts[net_name] = self.model.nets[net_name].state_dict()
+
+        state_dicts['scale'] = scale
 
         if name == 'weight':
             save(state_dicts, save_path)
             return
 
-        state_dicts['epoch'] = epoch
 
-        for opt_name, opt in self.model.optimizers.items():
-            state_dicts[opt_name] = opt.state_dict()
+        if opt_name is not None:
+            state_dicts[opt_name] = self.model.optimizers[opt_name].state_dict()
 
         save(state_dicts, save_path)
 
-        if keep > 0:
-            try:
-                if self.by_epoch:
-                    checkpoint_name_to_be_removed = os.path.join(
-                        self.output_dir, 'epoch_%s_%s.pdparams' %
-                        ((epoch - keep * self.weight_interval) //
-                         self.iters_per_epoch, name))
-                else:
-                    checkpoint_name_to_be_removed = os.path.join(
-                        self.output_dir, 'iter_%s_%s.pdparams' %
-                        (epoch - keep * self.weight_interval, name))
-
-                if os.path.exists(checkpoint_name_to_be_removed):
-                    os.remove(checkpoint_name_to_be_removed)
-
-            except Exception as e:
-                self.logger.info('remove old checkpoints error: {}'.format(e))
-
     def resume(self, checkpoint_path):
         state_dicts = load(checkpoint_path)
-        if state_dicts.get('epoch', None) is not None:
-            self.start_epoch = state_dicts['epoch'] + 1
-            self.global_steps = self.iters_per_epoch * state_dicts['epoch']
+        if state_dicts.get('scale', None) is not None:
+            self.start_scale = state_dicts['scale'] + 1
+            # self.global_steps = self.iters_per_epoch * state_dicts['epoch']
+        
+        scale = self.start_scale - 1
+        while scale > 0:
+            # self.current_iter = state_dicts['epoch'] + 1
+            for net_name, net in self.model.nets.items():
+                if net_name in state_dicts:
+                    net.set_state_dict(state_dicts[net_name])
+                    self.logger.info(
+                        'Loaded pretrained weight for net {}'.format(net_name))
 
-            self.current_iter = state_dicts['epoch'] + 1
+                    self.save(scale, net_name, name='weight')
 
-        for net_name, net in self.model.nets.items():
-            net.set_state_dict(state_dicts[net_name])
-
-        for opt_name, opt in self.model.optimizers.items():
-            opt.set_state_dict(state_dicts[opt_name])
+            if scale > 1:
+                checkpoint_path = checkpoint_path.replace('scale_%d'%scale, 'scale_%d'%(scale-1))
+                state_dicts = load(checkpoint_path)
+            scale = scale - 1
 
     def load(self, weight_path):
         state_dicts = load(weight_path)
